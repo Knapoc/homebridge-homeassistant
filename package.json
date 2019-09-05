@@ -1,6 +1,6 @@
 {
-  "name": "homebridge-homeassistant",
-  "version": "3.1.0",
+  "name": "homebridge-homeassistant-ng",
+  "version": "1.0.0",
   "description": "Homebridge plugin for Home Assistant: https://home-assistant.io",
   "license": "Apache-2.0",
   "keywords": [
@@ -16,18 +16,18 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git://github.com/home-assistant/homebridge-homeassistant.git"
+    "url": "git://github.com/knapoc/homebridge-homeassistant-ng.git"
   },
   "bugs": {
     "url": "http://github.com/home-assistant/homebridge-homeassistant/issues"
   },
   "engines": {
-    "node": ">=4.3.2",
+    "node": ">=7.6.0",
     "homebridge": ">=0.3.0"
   },
   "dependencies": {
-    "eventsource": "^0.2.1",
-    "request": "^2.69.0"
+    "home-assistant-js-websocket": "^4.3.1",
+    "ws": "^7.1.2"
   },
   "devDependencies": {
     "eslint": "^3.13.1",
