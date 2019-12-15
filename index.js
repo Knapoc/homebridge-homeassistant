@@ -71,7 +71,7 @@ HomeAssistantPlatform.prototype = {
     HAWS.createConnection({
       createSocket() {
 
-        authObj = this.access_token;
+        let authObj = this.access_token;
 
         function connect(promResolve, promReject) {
 
