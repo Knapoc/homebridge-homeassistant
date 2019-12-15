@@ -1,3 +1,4 @@
+
 'use strict';
 
 let Service;
@@ -67,120 +68,184 @@ HomeAssistantPlatform.prototype = {
 
     const that = this;
 
-    (async () => {
-      let auth = new HAWS.Auth({
-        access_token: this.access_token,
-        expires: new Date(new Date().getTime() + 1e11),
-        hassUrl: this.host
-      });
+    HAWS.createConnection({
+      createSocket() {
 
-      await HAWS.createConnection({
-        createSocket() {
-          WebSocket;
-          const ws = new WebSocket(this.wshost);
-          auth;
-          return ws;
-        }
-      }).then(
-        (conn) => {
-          that.log('Connection established to Home Assistant.');
-          this.wsConn = conn;
-          HAWS.subscribeEntities(conn, (states) => {
-            this.allEntities = states;
-            if (that.foundAccessories.length === 0) { // Only add accessories if we dont have any yet.
-              Object.keys(states).forEach(function (key) {
-                const entity = states[key];
-                const entityType = HAWS.extractDomain(entity.entity_id);
+        authObj = this.access_token;
 
-                // ignore devices that are not in the list of supported types
-                if (that.supportedTypes.indexOf(entityType) === -1) {
-                  return;
-                }
+        function connect(promResolve, promReject) {
 
-                // ignore hidden devices
-                if (entity.attributes && entity.attributes.hidden) {
-                  return;
-                }
+          const socket = new WebSocket(this.wshost);
 
-                // ignore homebridge hidden devices
-                if (entity.attributes && entity.attributes.homebridge_hidden) {
-                  return;
-                }
+          // If invalid auth, we will not try to reconnect.
+          let invalidAuth = false;
 
-                // support providing custom names
-                if (entity.attributes && entity.attributes.homebridge_name) {
-                  entity.attributes.friendly_name = entity.attributes.homebridge_name;
-                }
-
-                let accessory = null;
-                if (this.defaultVisibility === 'visible' || (this.defaultVisibility === 'hidden' && entity.attributes.homebridge_visible)) {
-                  if (entityType === 'light') {
-                    accessory = new HomeAssistantLight(that.log, entity, that, firmware);
-                  } else if (entityType === 'switch') {
-                    accessory = new HomeAssistantSwitch(that.log, entity, that, 'switch', firmware);
-                  } else if (entityType === 'lock') {
-                    accessory = new HomeAssistantLock(that.log, entity, that, firmware);
-                  } else if (entityType === 'garage_door') {
-                    that.log.error('Garage_doors are no longer supported by homebridge-homeassistant. Please upgrade to a newer version of Home Assistant to continue using this entity (with the new cover component).');
-                  } else if (entityType === 'scene') {
-                    accessory = new HomeAssistantSwitch(that.log, entity, that, 'scene', firmware);
-                  } else if (entityType === 'rollershutter') {
-                    that.log.error('Rollershutters are no longer supported by homebridge-homeassistant. Please upgrade to a newer version of Home Assistant to continue using this entity (with the new cover component).');
-                  } else if (entityType === 'input_boolean') {
-                    accessory = new HomeAssistantSwitch(that.log, entity, that, 'input_boolean', firmware);
-                  } else if (entityType === 'fan') {
-                    accessory = new HomeAssistantFan(that.log, entity, that, firmware);
-                  } else if (entityType === 'cover') {
-                    accessory = HomeAssistantCoverFactory(that.log, entity, that, firmware);
-                  } else if (entityType === 'sensor') {
-                    accessory = HomeAssistantSensorFactory(that.log, entity, that, firmware);
-                  } else if (entityType === 'device_tracker') {
-                    accessory = HomeAssistantDeviceTrackerFactory(that.log, entity, that, firmware);
-                  } else if (entityType === 'climate') {
-                    accessory = new HomeAssistantClimate(that.log, entity, that, firmware);
-                  } else if (entityType === 'media_player' && entity.attributes && entity.attributes.supported_features) {
-                    accessory = new HomeAssistantMediaPlayer(that.log, entity, that, firmware);
-                  } else if (entityType === 'binary_sensor' && entity.attributes && entity.attributes.device_class) {
-                    accessory = HomeAssistantBinarySensorFactory(that.log, entity, that, firmware);
-                  } else if (entityType === 'group') {
-                    accessory = new HomeAssistantSwitch(that.log, entity, that, 'group', firmware);
-                  } else if (entityType === 'alarm_control_panel') {
-                    accessory = new HomeAssistantAlarmControlPanel(that.log, entity, that, firmware);
-                  } else if (entityType === 'remote') {
-                    accessory = new HomeAssistantSwitch(that.log, entity, that, 'remote', firmware);
-                  } else if (entityType === 'automation') {
-                    accessory = new HomeAssistantSwitch(that.log, entity, that, 'automation', firmware);
-                  } else if (entityType === 'vacuum') {
-                    accessory = new HomeAssistantSwitch(that.log, entity, that, 'vacuum', firmware);
-                  } else if (entityType === 'script') {
-                    accessory = new HomeAssistantSwitch(that.log, entity, that, 'script', firmware);
-                  }
-
-                  if (accessory) {
-                    that.foundAccessories.push(accessory);
-                  }
-                }
-              });
-
-              callback(that.foundAccessories);
+          const onOpen = async event => {
+            try {
+              socket.send(JSON.stringify(authObj));
+            } catch (err) {
+              invalidAuth = err === HAWS.ERR_INVALID_AUTH;
+              socket.close();
             }
-          });
-          conn.subscribeEvents((data) => {
-            const numAccessories = this.foundAccessories.length;
-            for (let i = 0; i < numAccessories; i++) {
-              const accessory = this.foundAccessories[i];
+          };
 
-              if (accessory.entity_id === data.data.entity_id && accessory.onEvent) {
-                accessory.onEvent(data.data.old_state, data.data.new_state);
+          const onMessage = async event => {
+            const message = JSON.parse(event.data);
+
+            debug('[Auth Phase] Received', message);
+
+            switch (message.type) {
+              case MSG_TYPE_AUTH_INVALID:
+                invalidAuth = true;
+                socket.close();
+                break;
+
+              case MSG_TYPE_AUTH_OK:
+                socket.removeEventListener('open', onOpen);
+                socket.removeEventListener('message', onMessage);
+                socket.removeEventListener('close', onClose);
+                socket.removeEventListener('error', onClose);
+                promResolve(socket);
+                break;
+
+              default:
+                if (message.type !== MSG_TYPE_AUTH_REQUIRED) {
+                  debug('[Auth Phase] Unhandled message', message);
+                }
+            }
+          };
+
+          const onClose = () => {
+
+            // If we are in error handler make sure close handler doesn't also fire.
+            socket.removeEventListener('close', onClose);
+            if (invalidAuth) {
+              promReject(homeassistant.ERR_INVALID_AUTH);
+              return;
+            }
+
+            // Try again in a second
+            setTimeout(
+              () =>
+              connect(
+                promResolve,
+                promReject
+              ),
+              5000
+            );
+          };
+
+          socket.addEventListener('open', onOpen);
+          socket.addEventListener('message', onMessage);
+          socket.addEventListener('close', onClose);
+          socket.addEventListener('error', onClose);
+        }
+
+        return new Promise((resolve, reject) =>
+          connect(
+            resolve,
+            reject
+          )
+        );
+      }
+    }).then(
+      (conn) => {
+        that.log('Connection established to Home Assistant.');
+        this.wsConn = conn;
+        HAWS.subscribeEntities(conn, (states) => {
+          this.allEntities = states;
+          if (that.foundAccessories.length === 0) { // Only add accessories if we dont have any yet.
+            Object.keys(states).forEach(function(key) {
+              const entity = states[key];
+              const entityType = HAWS.extractDomain(entity.entity_id);
+              // ignore devices that are not in the list of supported types
+              if (that.supportedTypes.indexOf(entityType) === -1) {
+                return;
               }
+
+              // ignore hidden devices
+              if (entity.attributes && entity.attributes.hidden) {
+                return;
+              }
+
+              // ignore homebridge hidden devices
+              if (entity.attributes && entity.attributes.homebridge_hidden) {
+                return;
+              }
+
+              // support providing custom names
+              if (entity.attributes && entity.attributes.homebridge_name) {
+                entity.attributes.friendly_name = entity.attributes.homebridge_name;
+              }
+
+              let accessory = null;
+              if (this.defaultVisibility === 'visible' || (this.defaultVisibility === 'hidden' && entity.attributes.homebridge_visible)) {
+                if (entityType === 'light') {
+                  accessory = new HomeAssistantLight(that.log, entity, that, firmware);
+                } else if (entityType === 'switch') {
+                  accessory = new HomeAssistantSwitch(that.log, entity, that, 'switch', firmware);
+                } else if (entityType === 'lock') {
+                  accessory = new HomeAssistantLock(that.log, entity, that, firmware);
+                } else if (entityType === 'garage_door') {
+                  that.log.error('Garage_doors are no longer supported by homebridge-homeassistant. Please upgrade to a newer version of Home Assistant to continue using this entity (with the new cover component).');
+                } else if (entityType === 'scene') {
+                  accessory = new HomeAssistantSwitch(that.log, entity, that, 'scene', firmware);
+                } else if (entityType === 'rollershutter') {
+                  that.log.error('Rollershutters are no longer supported by homebridge-homeassistant. Please upgrade to a newer version of Home Assistant to continue using this entity (with the new cover component).');
+                } else if (entityType === 'input_boolean') {
+                  accessory = new HomeAssistantSwitch(that.log, entity, that, 'input_boolean', firmware);
+                } else if (entityType === 'fan') {
+                  accessory = new HomeAssistantFan(that.log, entity, that, firmware);
+                } else if (entityType === 'cover') {
+                  accessory = HomeAssistantCoverFactory(that.log, entity, that, firmware);
+                } else if (entityType === 'sensor') {
+                  accessory = HomeAssistantSensorFactory(that.log, entity, that, firmware);
+                } else if (entityType === 'device_tracker') {
+                  accessory = HomeAssistantDeviceTrackerFactory(that.log, entity, that, firmware);
+                } else if (entityType === 'climate') {
+                  accessory = new HomeAssistantClimate(that.log, entity, that, firmware);
+                } else if (entityType === 'media_player' && entity.attributes && entity.attributes.supported_features) {
+                  accessory = new HomeAssistantMediaPlayer(that.log, entity, that, firmware);
+                } else if (entityType === 'binary_sensor' && entity.attributes && entity.attributes.device_class) {
+                  accessory = HomeAssistantBinarySensorFactory(that.log, entity, that, firmware);
+                } else if (entityType === 'group') {
+                  accessory = new HomeAssistantSwitch(that.log, entity, that, 'group', firmware);
+                } else if (entityType === 'alarm_control_panel') {
+                  accessory = new HomeAssistantAlarmControlPanel(that.log, entity, that, firmware);
+                } else if (entityType === 'remote') {
+                  accessory = new HomeAssistantSwitch(that.log, entity, that, 'remote', firmware);
+                } else if (entityType === 'automation') {
+                  accessory = new HomeAssistantSwitch(that.log, entity, that, 'automation', firmware);
+                } else if (entityType === 'vacuum') {
+                  accessory = new HomeAssistantSwitch(that.log, entity, that, 'vacuum', firmware);
+                } else if (entityType === 'script') {
+                  accessory = new HomeAssistantSwitch(that.log, entity, that, 'script', firmware);
+                }
+
+                if (accessory) {
+                  that.foundAccessories.push(accessory);
+                }
+              }
+            });
+
+            callback(that.foundAccessories);
+          }
+        });
+        conn.subscribeEvents((data) => {
+          const numAccessories = this.foundAccessories.length;
+          for (let i = 0; i < numAccessories; i++) {
+            const accessory = this.foundAccessories[i];
+
+            if (accessory.entity_id === data.data.entity_id && accessory.onEvent) {
+              accessory.onEvent(data.data.old_state, data.data.new_state);
             }
-          }, 'state_changed');
-        },
-        (err) => {
-          that.log('Connection failed with code', err);
-        }
-      );
-    })();
+          }
+        }, 'state_changed');
+      },
+      (err) => {
+        that.log('Connection failed with code', err);
+      }
+    );
   },
 };
 
