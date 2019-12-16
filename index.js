@@ -23,11 +23,15 @@ let HomeAssistantSwitch;
 let HomeAssistantDeviceTrackerFactory;
 let HomeAssistantClimate;
 
+const MSG_TYPE_AUTH_REQUIRED = "auth_required";
+const MSG_TYPE_AUTH_INVALID = "auth_invalid";
+const MSG_TYPE_AUTH_OK = "auth_ok";
+
 function HomeAssistantPlatform(log, config, api) {
   // auth info
   this.host = config.host;
-  this.wshost = config.host.replace(/^http:\/\//i, 'ws://').replace(/^https:\/\//i, 'wss://');
-  this.access_token = config.access_token;
+  //this.wshost = config.host.replace(/^http:\/\//i, 'ws://').replace(/^https:\/\//i, 'wss://');
+  this.accessToken = config.access_token;
   this.supportedTypes = config.supported_types || ['alarm_control_panel', 'automation', 'binary_sensor', 'climate', 'cover', 'device_tracker', 'fan', 'group', 'input_boolean', 'light', 'lock', 'media_player', 'remote', 'scene', 'script', 'sensor', 'switch', 'vacuum'];
   this.foundAccessories = [];
   this.logging = config.logging !== undefined ? config.logging : true;
@@ -70,12 +74,22 @@ HomeAssistantPlatform.prototype = {
 
     HAWS.createConnection({
       createSocket() {
+        
+        const self = that;
 
-        let authObj = this.access_token;
+        const url = `ws${self.host.substr(4)}/api/websocket`;
 
+        const authObj = {
+          type: 'auth'
+        };
+
+        authObj['access_token'] = self.accessToken;
+        //authObj['access_token'] =
+        //  "asuperlongaccesstoken"
+   
         function connect(promResolve, promReject) {
 
-          const socket = new WebSocket(this.wshost);
+          const socket = new WebSocket(url);
 
           // If invalid auth, we will not try to reconnect.
           let invalidAuth = false;
@@ -89,31 +103,35 @@ HomeAssistantPlatform.prototype = {
             }
           };
 
-          const onMessage = async event => {
+          const handleMessage = async event => {
             const message = JSON.parse(event.data);
-
-            debug('[Auth Phase] Received', message);
-
+            if (HAWS.debug) {
+              console.log("[Auth phase] Received", message);
+            }
+            
             switch (message.type) {
-              case MSG_TYPE_AUTH_INVALID:
+              case HAWS.MSG_TYPE_AUTH_INVALID:
                 invalidAuth = true;
                 socket.close();
                 break;
-
               case MSG_TYPE_AUTH_OK:
-                socket.removeEventListener('open', onOpen);
-                socket.removeEventListener('message', onMessage);
-                socket.removeEventListener('close', onClose);
-                socket.removeEventListener('error', onClose);
+                socket.removeEventListener("open", onOpen);
+                socket.removeEventListener("message", handleMessage);
+                socket.removeEventListener("close", onClose);
+                socket.removeEventListener("error", onClose);
                 promResolve(socket);
                 break;
-
+                
               default:
-                if (message.type !== MSG_TYPE_AUTH_REQUIRED) {
-                  debug('[Auth Phase] Unhandled message', message);
+                if (HAWS.debug) {
+                  // We already send this message when socket opens
+                  if (message.type !== MSG_TYPE_AUTH_REQUIRED) {
+                    console.warn("[Auth phase] Unhandled message", message);
+                  }
                 }
-            }
-          };
+              }
+            };
+            
 
           const onClose = () => {
 
@@ -136,7 +154,7 @@ HomeAssistantPlatform.prototype = {
           };
 
           socket.addEventListener('open', onOpen);
-          socket.addEventListener('message', onMessage);
+          socket.addEventListener('message', handleMessage);
           socket.addEventListener('close', onClose);
           socket.addEventListener('error', onClose);
         }
@@ -157,7 +175,7 @@ HomeAssistantPlatform.prototype = {
           if (that.foundAccessories.length === 0) { // Only add accessories if we dont have any yet.
             Object.keys(states).forEach(function(key) {
               const entity = states[key];
-              const entityType = HAWS.extractDomain(entity.entity_id);
+              const entityType = entity.entity_id.substr(0, entity.entity_id.indexOf('.'));
               // ignore devices that are not in the list of supported types
               if (that.supportedTypes.indexOf(entityType) === -1) {
                 return;
@@ -179,7 +197,7 @@ HomeAssistantPlatform.prototype = {
               }
 
               let accessory = null;
-              if (this.defaultVisibility === 'visible' || (this.defaultVisibility === 'hidden' && entity.attributes.homebridge_visible)) {
+              if (that.defaultVisibility === 'visible' || (that.defaultVisibility === 'hidden' && entity.attributes.homebridge_visible)) {
                 if (entityType === 'light') {
                   accessory = new HomeAssistantLight(that.log, entity, that, firmware);
                 } else if (entityType === 'switch') {
