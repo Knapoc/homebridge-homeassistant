@@ -35,7 +35,7 @@ function HomeAssistantPlatform(log, config, api) {
   this.supportedTypes = config.supported_types || ['alarm_control_panel', 'automation', 'binary_sensor', 'climate', 'cover', 'device_tracker', 'fan', 'group', 'input_boolean', 'light', 'lock', 'media_player', 'remote', 'scene', 'script', 'sensor', 'switch', 'vacuum'];
   this.foundAccessories = [];
   this.logging = config.logging !== undefined ? config.logging : true;
-  this.verify_ssl = config.verify_ssl !== undefined ? config.verify_ssl : true;
+  this.verifySsl = config.verify_ssl !== undefined ? config.verify_ssl : true;
   this.log = log;
   if (config.default_visibility === 'hidden' || config.default_visibility === 'visible') {
     this.defaultVisibility = config.default_visibility;
@@ -83,12 +83,12 @@ HomeAssistantPlatform.prototype = {
         };
 
         authObj['access_token'] = self.accessToken;
-        //authObj['access_token'] =
-        //  "asuperlongaccesstoken"
    
         function connect(promResolve, promReject) {
 
-          const socket = new WebSocket(url);
+          const socket = new WebSocket(url, {
+            rejectUnauthorized: self.verifySsl
+          });
 
           // If invalid auth, we will not try to reconnect.
           let invalidAuth = false;
