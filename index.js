@@ -56,16 +56,15 @@ HomeAssistantPlatform.prototype = {
   fetchState(entityID, callback) {
     callback(this.allEntities[entityID]);
   },
-  callService(domain, service, serviceData, callback) {
-    this.wsConn.callService(domain, service, serviceData).then(
-      (data) => {
-        callback(data);
-      },
-      (err) => {
-        this.log('Error when calling service', err);
-        callback(null);
-      }
+  async callService(domain, service, data) {
+    const result = HAWS.callService(
+      this.wsConn,
+      domain,
+      service,
+      data
     );
+
+    return result;
   },
   accessories(callback) {
     this.log('Fetching HomeAssistant devices.');
